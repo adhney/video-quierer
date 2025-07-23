@@ -1,739 +1,500 @@
 #!/usr/bin/env python3
 """
-🌐 Local Video Search Server - With Progress Bar
-================================================
-Web interface for uploading videos and YouTube downloads with real-time progress
+🚀 New FastAPI Server - Using Overhauled Video Search System
+==========================================================
+Clean, simple, and actually working with frame preview!
 """
 
-from flask import Flask, request, render_template_string, jsonify
-from flask_socketio import SocketIO, emit
-import os
-import sys
-from pathlib import Path
-import subprocess
-import json
+import asyncio
+import logging
 import time
+import cv2
+import base64
+from io import BytesIO
+from PIL import Image
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import List, Optional
+import uvicorn
 import numpy as np
-import threading
-import re
 
-# Import our semantic search system
-from semantic_video_search import SemanticVideoProcessor, check_dependencies
+# Import our clean system
+from video_search_overhaul import VideoSearchSystem
 
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:%(name)s:%(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Configuration
-UPLOAD_FOLDER = Path("videos")
-UPLOAD_FOLDER.mkdir(exist_ok=True)
-app.config['UPLOAD_FOLDER'] = str(UPLOAD_FOLDER)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max
+# Global system instance
+video_system: Optional[VideoSearchSystem] = None
 
-# Global search processor
-search_processor = None
+# FastAPI app
+app = FastAPI(
+    title="Video Search API - Overhauled",
+    description="Clean, simple, and reliable video search system with frame preview",
+    version="2.1.0"
+)
 
+# Add CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def convert_numpy_types(obj):
-    """Convert numpy types to native Python types for JSON serialization"""
-    if isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {key: convert_numpy_types(value) for key, value in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_numpy_types(item) for item in obj]
-    return obj
+# Mount static files (for UI)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount videos directory for direct video access
+app.mount("/videos", StaticFiles(directory="videos"), name="videos")
 
-
-def format_timestamp(seconds):
-    """Convert seconds to readable timestamp format like 1m50s"""
-    total_seconds = int(seconds)
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    secs = total_seconds % 60
-
-    if hours > 0:
-        return f"{hours}h{minutes}m{secs}s"
-    elif minutes > 0:
-        return f"{minutes}m{secs}s"
-    else:
-        return f"{secs}s"
+# Pydantic models
 
 
-def init_search_system():
-    """Initialize the search system"""
-    global search_processor
-    if search_processor is None:
-        deps = check_dependencies()
-        use_clip = deps['torch'] and deps['clip']
-        search_processor = SemanticVideoProcessor(use_clip=use_clip)
-
-        # Process existing videos
-        video_files = []
-        for ext in ['.mp4', '.avi', '.mov', '.mkv']:
-            video_files.extend(list(UPLOAD_FOLDER.glob(f"*{ext}")))
-
-        for video_file in video_files:
-            search_processor.process_video(str(video_file))
-
-    return search_processor
+class SearchRequest(BaseModel):
+    query: str
+    k: Optional[int] = 5
 
 
-def download_youtube_video_with_progress(url, output_path, session_id):
-    """Download video from YouTube using yt-dlp with real-time progress"""
+class SearchResult(BaseModel):
+    video_name: str
+    timestamp: float
+    formatted_time: str
+    score: float
+    frame_id: int
+
+
+class SearchResponse(BaseModel):
+    query: str
+    results: List[SearchResult]
+    search_time_ms: float
+    total_results: int
+
+
+class SystemStats(BaseModel):
+    total_embeddings: int
+    total_videos: int
+    system_ready: bool
+    uptime_seconds: float
+
+# Enhanced video info model for compatibility
+
+
+class VideoInfoEnhanced(BaseModel):
+    id: str
+    filename: str
+    name: str
+    status: str
+    frame_count: int
+    duration: Optional[float] = None
+    fps: Optional[float] = None
+    size: Optional[int] = None
+    processed_at: Optional[float] = None
+
+
+class VideoListResponse(BaseModel):
+    videos: List[VideoInfoEnhanced]
+    total_count: int
+
+
+class UploadResponse(BaseModel):
+    success: bool
+    video_id: str
+    filename: str
+    frames_indexed: int
+    processing_time: float
+
+
+class FrameResponse(BaseModel):
+    success: bool
+    frame_data: Optional[str] = None  # base64 encoded image
+    error: Optional[str] = None
+    timestamp: float
+    video_name: str
+
+# Startup/shutdown
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the video search system"""
+    global video_system
+
+    logger.info("🚀 Starting Video Search System...")
+
     try:
-        # Check if yt-dlp is available
-        result = subprocess.run(['yt-dlp', '--version'],
-                                capture_output=True, text=True)
-        if result.returncode != 0:
-            socketio.emit('download_error', {
-                          'error': 'yt-dlp not installed'}, room=session_id)
-            return False, "yt-dlp not installed. Install with: pip install yt-dlp"
+        video_system = VideoSearchSystem("videos")
 
-        socketio.emit('download_progress', {
-                      'progress': 0, 'status': 'Starting download...'}, room=session_id)
+        # Run startup in thread to avoid blocking
+        import threading
+        startup_complete = threading.Event()
 
-        # Download video with progress
-        cmd = [
-            'yt-dlp',
-            '-f', 'best[height<=720]',  # Limit to 720p for faster processing
-            '-o', str(output_path / '%(title)s.%(ext)s'),
-            '--restrict-filenames',  # Safe filenames
-            '--newline',  # Each progress update on new line
-            url
-        ]
+        def run_startup():
+            try:
+                video_system.startup()
+                startup_complete.set()
+            except Exception as e:
+                logger.error(f"Startup failed: {e}")
+                startup_complete.set()
 
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   universal_newlines=True, bufsize=1)
+        startup_thread = threading.Thread(target=run_startup)
+        startup_thread.start()
 
-        # Track progress in real-time
-        progress = 0
-        for line in process.stdout:
-            if '[download]' in line:
-                # Extract progress percentage
-                progress_match = re.search(r'(\d+\.?\d*)%', line)
-                if progress_match:
-                    progress = float(progress_match.group(1))
-                    socketio.emit('download_progress', {
-                        'progress': progress,
-                        'status': f'Downloading... {progress:.1f}%'
-                    }, room=session_id)
+        # Wait for startup (with timeout)
+        startup_complete.wait(timeout=300)  # 5 minutes max
 
-                # Extract file size and speed info
-                if 'of' in line:
-                    parts = line.split()
-                    try:
-                        # Look for file size and speed patterns
-                        for i, part in enumerate(parts):
-                            if part == 'of' and i+1 < len(parts):
-                                size = parts[i+1]
-                                if i+3 < len(parts) and parts[i+2] == 'at':
-                                    speed = parts[i+3]
-                                    socketio.emit('download_progress', {
-                                        'progress': progress,
-                                        'status': f'Downloading {size} at {speed} ({progress:.1f}%)'
-                                    }, room=session_id)
-                                break
-                    except:
-                        pass
-
-        process.wait()
-
-        if process.returncode == 0:
-            socketio.emit('download_progress', {
-                'progress': 100,
-                'status': 'Download completed! Processing video...'
-            }, room=session_id)
-
-            # Find the downloaded file
-            downloaded_files = list(output_path.glob(
-                "*.mp4")) + list(output_path.glob("*.mkv"))
-            if downloaded_files:
-                return True, str(downloaded_files[-1])  # Return latest file
-            else:
-                return False, "Download completed but file not found"
-        else:
-            stderr = process.stderr.read()
-            socketio.emit('download_error', {
-                          'error': f'Download failed: {stderr}'}, room=session_id)
-            return False, f"Download failed: {stderr}"
+        logger.info("✅ Video Search System ready!")
 
     except Exception as e:
-        socketio.emit('download_error', {'error': str(e)}, room=session_id)
-        return False, f"Error: {str(e)}"
+        logger.error(f"❌ Failed to initialize system: {e}")
+        raise
 
 
-# Enhanced HTML Template with Progress Bar
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎬 Semantic Video Search</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        .container {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        h1 { color: #333; text-align: center; }
-        .upload-section, .search-section {
-            margin: 20px 0;
-            padding: 20px;
-            border: 2px dashed #ddd;
-            border-radius: 8px;
-        }
-        .youtube-section {
-            background: #ffe6e6;
-            border-color: #ff9999;
-        }
-        .file-section {
-            background: #e6f3ff;
-            border-color: #99ccff;
-        }
-        .search-section {
-            background: #f0f8e6;
-            border-color: #99cc99;
-        }
-        input[type="text"], input[type="file"] {
-            width: 100%;
-            padding: 12px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 16px;
-        }
-        button {
-            background: #007bff;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            margin: 5px;
-        }
-        button:hover { background: #0056b3; }
-        button:disabled { 
-            background: #6c757d; 
-            cursor: not-allowed; 
-        }
-        .youtube-btn { background: #ff0000; }
-        .youtube-btn:hover { background: #cc0000; }
-        
-        /* Progress Bar Styles */
-        .progress-container {
-            width: 100%;
-            background-color: #f0f0f0;
-            border-radius: 4px;
-            margin: 15px 0;
-            display: none;
-        }
-        .progress-bar {
-            height: 20px;
-            background: linear-gradient(45deg, #007bff, #0056b3);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .progress-bar::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(45deg, transparent 25%, rgba(255,255,255,0.2) 25%, rgba(255,255,255,0.2) 50%, transparent 50%, transparent 75%, rgba(255,255,255,0.2) 75%);
-            background-size: 20px 20px;
-            animation: progress-animation 1s linear infinite;
-        }
-        @keyframes progress-animation {
-            0% { transform: translateX(-20px); }
-            100% { transform: translateX(20px); }
-        }
-        .progress-text {
-            text-align: center;
-            margin: 5px 0;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .results {
-            margin-top: 20px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 5px;
-        }
-        .result-item {
-            padding: 10px;
-            margin: 10px 0;
-            background: white;
-            border-left: 4px solid #007bff;
-            border-radius: 4px;
-        }
-        .status {
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        .status.success { background: #d4edda; color: #155724; }
-        .status.error { background: #f8d7da; color: #721c24; }
-        .status.info { background: #d1ecf1; color: #0c5460; }
-        .video-list {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 15px;
-            margin-top: 20px;
-        }
-        .video-card {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎬 Semantic Video Search Server</h1>
-        
-        <!-- YouTube Download Section -->
-        <div class="upload-section youtube-section">
-            <h3>📺 Download from YouTube</h3>
-            <input type="text" id="youtube-url" placeholder="Enter YouTube URL">
-            <button class="youtube-btn" id="download-btn" onclick="downloadYoutube()">📥 Download & Process</button>
-            
-            <!-- Progress Bar -->
-            <div class="progress-container" id="progress-container">
-                <div class="progress-text" id="progress-text">Preparing download...</div>
-                <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
-            </div>
-        </div>
-        
-        <!-- File Upload Section -->
-        <div class="upload-section file-section">
-            <h3>📁 Upload Video File</h3>
-            <input type="file" id="video-file" accept=".mp4,.avi,.mov,.mkv">
-            <button onclick="uploadFile()">📤 Upload & Process</button>
-        </div>
-        
-        <!-- Search Section -->
-        <div class="search-section">
-            <h3>🔍 Search Videos</h3>
-            <input type="text" id="search-query" placeholder="Enter search query">
-            <button onclick="searchVideos()">🔍 Search</button>
-            <button onclick="searchVideos(true)">⚡ Fast Search</button>
-        </div>
-        
-        <!-- Status Messages -->
-        <div id="status"></div>
-        
-        <!-- Search Results -->
-        <div id="results"></div>
-        
-        <!-- Video List -->
-        <div class="container">
-            <h3>📼 Available Videos</h3>
-            <div id="video-list" class="video-list"></div>
-        </div>
-    </div>
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    logger.info("🛑 Shutting down Video Search System...")
 
-    <script>
-        // Initialize Socket.IO
-        const socket = io();
-        
-        function showStatus(message, type = 'info') {
-            const status = document.getElementById('status');
-            status.innerHTML = `<div class="status ${type}">${message}</div>`;
-            setTimeout(() => status.innerHTML = '', 5000);
-        }
-        
-        function showProgress(show = true) {
-            const container = document.getElementById('progress-container');
-            const btn = document.getElementById('download-btn');
-            container.style.display = show ? 'block' : 'none';
-            btn.disabled = show;
-            
-            if (!show) {
-                // Reset progress
-                document.getElementById('progress-bar').style.width = '0%';
-                document.getElementById('progress-text').textContent = 'Preparing download...';
-            }
-        }
-        
-        function updateProgress(progress, status) {
-            document.getElementById('progress-bar').style.width = progress + '%';
-            document.getElementById('progress-text').textContent = status;
-        }
-        
-        // Socket.IO event listeners
-        socket.on('download_progress', function(data) {
-            updateProgress(data.progress, data.status);
-        });
-        
-        socket.on('download_error', function(data) {
-            showStatus(`❌ Download failed: ${data.error}`, 'error');
-            showProgress(false);
-        });
-        
-        async function downloadYoutube() {
-            const url = document.getElementById('youtube-url').value.trim();
-            if (!url) {
-                showStatus('Please enter a YouTube URL', 'error');
-                return;
-            }
-            
-            showProgress(true);
-            showStatus('Starting YouTube download...', 'info');
-            
-            try {
-                const response = await fetch('/download-youtube', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        url: url,
-                        session_id: socket.id 
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    updateProgress(100, 'Video processed successfully!');
-                    showStatus(`✅ Video downloaded: ${result.filename}`, 'success');
-                    loadVideoList();
-                    setTimeout(() => showProgress(false), 2000);
-                } else {
-                    showStatus(`❌ Download failed: ${result.error}`, 'error');
-                    showProgress(false);
-                }
-            } catch (error) {
-                showStatus(`❌ Error: ${error.message}`, 'error');
-                showProgress(false);
-            }
-        }
-        
-        async function uploadFile() {
-            const fileInput = document.getElementById('video-file');
-            const file = fileInput.files[0];
-            
-            if (!file) {
-                showStatus('Please select a video file', 'error');
-                return;
-            }
-            
-            showStatus('Uploading and processing video...', 'info');
-            
-            const formData = new FormData();
-            formData.append('video', file);
-            
-            try {
-                const response = await fetch('/upload-video', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showStatus(`✅ Video uploaded: ${result.filename}`, 'success');
-                    loadVideoList();
-                } else {
-                    showStatus(`❌ Upload failed: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                showStatus(`❌ Error: ${error.message}`, 'error');
-            }
-        }
-        
-        async function searchVideos(fastMode = false) {
-            const query = document.getElementById('search-query').value.trim();
-            if (!query) {
-                showStatus('Please enter a search query', 'error');
-                return;
-            }
-            
-            showStatus(`🔍 Searching for: "${query}"...`, 'info');
-            
-            try {
-                const response = await fetch('/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        query: query,
-                        fast_mode: fastMode,
-                        k: 5 
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    displayResults(result.results, result.search_time, fastMode);
-                } else {
-                    showStatus(`❌ Search failed: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                showStatus(`❌ Error: ${error.message}`, 'error');
-            }
-        }
-        
-        function displayResults(results, searchTime, fastMode) {
-            const resultsDiv = document.getElementById('results');
-            
-            if (results.length === 0) {
-                resultsDiv.innerHTML = '<div class="results"><p>No results found</p></div>';
-                return;
-            }
-            
-            const mode = fastMode ? '⚡ Fast' : '🧠 Semantic';
-            let html = `<div class="results">
-                <h4>${mode} Search Results (${searchTime.toFixed(1)}ms)</h4>`;
-            
-            results.forEach((result, index) => {
-                const formattedTime = formatTimestamp(result.timestamp);
-                html += `<div class="result-item">
-                    <strong>${index + 1}. ${result.video_name}</strong><br>
-                    📍 Timestamp: ${formattedTime}<br>
-                    📊 Score: ${result.score.toFixed(3)}
-                </div>`;
-            });
-            
-            html += '</div>';
-            resultsDiv.innerHTML = html;
-        }
-        
-        function formatTimestamp(seconds) {
-            const totalSeconds = Math.floor(seconds);
-            const hours = Math.floor(totalSeconds / 3600);
-            const minutes = Math.floor((totalSeconds % 3600) / 60);
-            const secs = totalSeconds % 60;
-            
-            if (hours > 0) {
-                return `${hours}h${minutes}m${secs}s`;
-            } else if (minutes > 0) {
-                return `${minutes}m${secs}s`;
-            } else {
-                return `${secs}s`;
-            }
-        }
-        
-        async function loadVideoList() {
-            try {
-                const response = await fetch('/videos');
-                const result = await response.json();
-                
-                const videoList = document.getElementById('video-list');
-                
-                if (result.videos.length === 0) {
-                    videoList.innerHTML = '<p>No videos uploaded yet</p>';
-                    return;
-                }
-                
-                let html = '';
-                result.videos.forEach(video => {
-                    html += `<div class="video-card">
-                        <h4>📹 ${video.name}</h4>
-                        <p>📊 Size: ${(video.size / 1024 / 1024).toFixed(1)} MB</p>
-                        <p>📅 Added: ${new Date(video.modified * 1000).toLocaleString()}</p>
-                    </div>`;
-                });
-                
-                videoList.innerHTML = html;
-            } catch (error) {
-                console.error('Error loading video list:', error);
-            }
-        }
-        
-        // Load video list on page load
-        document.addEventListener('DOMContentLoaded', loadVideoList);
-    </script>
-</body>
-</html>
-"""
+# Helper functions for frame extraction
 
 
-@app.route('/')
-def index():
-    """Main page"""
-    return render_template_string(HTML_TEMPLATE)
-
-
-@app.route('/download-youtube', methods=['POST'])
-def download_youtube():
-    """Download video from YouTube with progress tracking"""
+def extract_frame_at_timestamp(video_path: str, timestamp: float) -> Optional[np.ndarray]:
+    """Extract a specific frame at timestamp"""
     try:
-        data = request.json
-        url = data.get('url', '').strip()
-        session_id = data.get('session_id')
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return None
 
-        if not url:
-            return jsonify({'success': False, 'error': 'No URL provided'})
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_number = int(timestamp * fps)
 
-        # Run download in background thread to enable real-time progress
-        def download_task():
-            success, result = download_youtube_video_with_progress(
-                url, UPLOAD_FOLDER, session_id)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret, frame = cap.read()
+        cap.release()
 
-            if success:
-                # Process the video with our search system
-                processor = init_search_system()
-                socketio.emit('download_progress', {
-                    'progress': 100,
-                    'status': 'Processing video for search...'
-                }, room=session_id)
-
-                processor.process_video(result)
-
-                socketio.emit('download_complete', {
-                    'success': True,
-                    'filename': Path(result).name
-                }, room=session_id)
-            else:
-                socketio.emit('download_complete', {
-                    'success': False,
-                    'error': result
-                }, room=session_id)
-
-        # Start download in background
-        thread = threading.Thread(target=download_task)
-        thread.daemon = True
-        thread.start()
-
-        return jsonify({'success': True, 'message': 'Download started'})
+        if ret:
+            return frame
+        return None
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Frame extraction failed: {e}")
+        return None
 
 
-@app.route('/upload-video', methods=['POST'])
-def upload_video():
-    """Upload video file"""
+def frame_to_base64(frame: np.ndarray) -> str:
+    """Convert frame to base64 encoded JPEG"""
     try:
-        if 'video' not in request.files:
-            return jsonify({'success': False, 'error': 'No video file provided'})
+        # Convert BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        file = request.files['video']
-        if file.filename == '':
-            return jsonify({'success': False, 'error': 'No file selected'})
+        # Convert to PIL Image
+        pil_image = Image.fromarray(frame_rgb)
 
-        # Save the file
-        filename = file.filename
-        filepath = UPLOAD_FOLDER / filename
-        file.save(str(filepath))
+        # Save to bytes buffer as JPEG
+        buffer = BytesIO()
+        pil_image.save(buffer, format='JPEG', quality=85)
 
-        # Process the video with our search system
-        processor = init_search_system()
-        processor.process_video(str(filepath))
+        # Encode to base64
+        img_bytes = buffer.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
 
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'message': 'Video uploaded and processed successfully'
-        })
+        return f"data:image/jpeg;base64,{img_base64}"
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Base64 conversion failed: {e}")
+        return ""
+
+# API endpoints
 
 
-@app.route('/search', methods=['POST'])
-def search():
-    """Search videos - FIXED VERSION"""
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the beautiful modular UI"""
     try:
-        data = request.json
-        query = data.get('query', '').strip()
-        fast_mode = data.get('fast_mode', False)
-        k = data.get('k', 5)
+        with open("static/index.html", "r") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse("""
+        <h1>UI File Not Found</h1>
+        <p>The static/index.html file was not found. Please ensure it exists.</p>
+        <p><a href="/api/docs">Go to API Documentation</a></p>
+        """)
 
-        if not query:
-            return jsonify({'success': False, 'error': 'No query provided'})
 
-        processor = init_search_system()
+@app.post("/api/search", response_model=SearchResponse)
+async def search_videos(request: SearchRequest):
+    """Search videos"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
 
-        # Override processor mode if fast_mode is specified
-        if fast_mode:
-            processor.use_clip = False
+    start_time = time.time()
 
-        results, search_time = processor.search(query, k=k)
+    try:
+        results = video_system.search(request.query, k=request.k)
 
-        # Convert numpy types to native Python types for JSON serialization
-        results_converted = convert_numpy_types(results)
-        search_time_converted = convert_numpy_types(search_time)
+        search_time = (time.time() - start_time) * 1000
 
-        return jsonify({
-            'success': True,
-            'results': results_converted,
-            'search_time': search_time_converted,
-            'query': query
-        })
+        return SearchResponse(
+            query=request.query,
+            results=[SearchResult(**result) for result in results],
+            search_time_ms=search_time,
+            total_results=len(results)
+        )
 
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logger.error(f"Search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.route('/videos')
-def list_videos():
-    """List available videos"""
+@app.get("/api/stats", response_model=SystemStats)
+async def get_stats():
+    """Get system statistics"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
+
+    unique_videos = len(set(meta['video_name']
+                        for meta in video_system.index.metadata))
+
+    return SystemStats(
+        total_embeddings=len(video_system.index.embeddings),
+        total_videos=unique_videos,
+        system_ready=True,
+        uptime_seconds=time.time()
+    )
+
+
+@app.get("/api/videos", response_model=VideoListResponse)
+async def get_videos():
+    """Get list of available videos with enhanced info"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
+
+    # Get unique videos from metadata and calculate stats
+    videos_info = {}
+    for meta in video_system.index.metadata:
+        video_name = meta['video_name']
+        if video_name not in videos_info:
+            # Try to get video stats
+            video_path = video_system.videos_dir / video_name
+            duration, fps, size = None, None, None
+
+            if video_path.exists():
+                try:
+                    # Get file size
+                    size = video_path.stat().st_size
+
+                    # Get video properties
+                    cap = cv2.VideoCapture(str(video_path))
+                    if cap.isOpened():
+                        fps = cap.get(cv2.CAP_PROP_FPS)
+                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        duration = frame_count / fps if fps > 0 else None
+                        cap.release()
+                except Exception:
+                    pass
+
+            videos_info[video_name] = VideoInfoEnhanced(
+                id=video_name.replace('.mp4', '').replace('.', '_'),
+                filename=video_name,
+                name=video_name,
+                status='indexed',
+                frame_count=0,
+                duration=duration,
+                fps=fps,
+                size=size,
+                processed_at=time.time()  # Approximate
+            )
+        videos_info[video_name].frame_count += 1
+
+    video_list = list(videos_info.values())
+    return VideoListResponse(
+        videos=video_list,
+        total_count=len(video_list)
+    )
+
+
+@app.post("/api/videos/upload", response_model=UploadResponse)
+async def upload_video(file: UploadFile = File(...)):
+    """Upload and process a new video"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
+
+    # Validate file type
+    allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv']
+    file_ext = None
+    for ext in allowed_extensions:
+        if file.filename.lower().endswith(ext.lower()):
+            file_ext = ext
+            break
+
+    if not file_ext:
+        raise HTTPException(
+            status_code=400, detail="Invalid file type. Supported: MP4, AVI, MOV, MKV")
+
+    start_time = time.time()
+
     try:
-        videos = []
-        for video_file in UPLOAD_FOLDER.iterdir():
-            if video_file.suffix.lower() in ['.mp4', '.avi', '.mov', '.mkv']:
-                stat = video_file.stat()
-                videos.append({
-                    'name': video_file.name,
-                    'size': stat.st_size,
-                    'modified': stat.st_mtime
-                })
+        # Save uploaded file
+        file_path = video_system.videos_dir / file.filename
 
-        return jsonify({'videos': videos})
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        # Process the video
+        frames_before = len(video_system.index.embeddings)
+        video_system._process_single_video(file_path)
+        frames_after = len(video_system.index.embeddings)
+
+        # Update hash
+        video_system.index.video_hashes[file.filename] = video_system.processor.get_video_hash(
+            file_path)
+
+        # Save cache
+        video_system.index.save_to_disk(video_system.cache_path)
+
+        processing_time = time.time() - start_time
+        frames_indexed = frames_after - frames_before
+
+        return UploadResponse(
+            success=True,
+            video_id=file.filename.replace('.mp4', '').replace('.', '_'),
+            filename=file.filename,
+            frames_indexed=frames_indexed,
+            processing_time=processing_time
+        )
 
     except Exception as e:
-        return jsonify({'error': str(e)})
+        # Clean up file if processing failed
+        if file_path.exists():
+            file_path.unlink()
+
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-if __name__ == '__main__':
-    print("🌐 Starting Semantic Video Search Server with Progress Bar")
-    print("=" * 60)
+@app.delete("/api/videos/{video_id}")
+async def delete_video(video_id: str):
+    """Delete a video from the system"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
 
-    # Check dependencies
-    deps = check_dependencies()
-    print("📦 Available components:")
-    for name, version in deps.items():
-        if version:
-            print(f"   ✅ {name}: {version}")
-        else:
-            print(f"   ❌ {name}: Not available")
+    # Find video by ID
+    video_filename = None
+    for meta in video_system.index.metadata:
+        vid_id = meta['video_name'].replace('.mp4', '').replace('.', '_')
+        if vid_id == video_id:
+            video_filename = meta['video_name']
+            break
 
-    # Check for yt-dlp
+    if not video_filename:
+        raise HTTPException(status_code=404, detail="Video not found")
+
     try:
-        result = subprocess.run(['yt-dlp', '--version'],
-                                capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"   ✅ yt-dlp: Available")
-        else:
-            print(f"   ⚠️  yt-dlp: Install with 'pip install yt-dlp'")
-    except:
-        print(f"   ⚠️  yt-dlp: Install with 'pip install yt-dlp'")
+        # Remove video file
+        video_path = video_system.videos_dir / video_filename
+        if video_path.exists():
+            video_path.unlink()
 
-    print(f"\n🚀 Server starting with real-time progress...")
-    print(f"📱 Open your browser to: http://localhost:5000")
-    print(f"📁 Videos will be saved to: {UPLOAD_FOLDER.absolute()}")
-    print(f"🔍 Both semantic and fast search available!")
-    print(f"📊 Real-time download progress enabled!")
+        # Remove from cache hash
+        if video_filename in video_system.index.video_hashes:
+            del video_system.index.video_hashes[video_filename]
 
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+        # TODO: Remove embeddings from index (would need index rebuild for now)
+        # For now, just mark the video as gone so it won't appear in future results
+
+        # Save updated cache
+        video_system.index.save_to_disk(video_system.cache_path)
+
+        return {"success": True, "message": f"Video {video_filename} deleted successfully"}
+
+    except Exception as e:
+        logger.error(f"Delete failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
+
+
+@app.get("/api/video/{video_id}/frame", response_model=FrameResponse)
+async def get_video_frame(video_id: str, timestamp: float = Query(..., description="Timestamp in seconds")):
+    """Get video frame at timestamp"""
+    if not video_system:
+        raise HTTPException(status_code=503, detail="System not ready")
+
+    # Find video file
+    video_name = None
+    for meta in video_system.index.metadata:
+        vid_id = meta['video_name'].replace('.mp4', '').replace('.', '_')
+        if vid_id == video_id:
+            video_name = meta['video_name']
+            break
+
+    if not video_name:
+        return FrameResponse(
+            success=False,
+            error="Video not found",
+            timestamp=timestamp,
+            video_name="unknown"
+        )
+
+    video_path = video_system.videos_dir / video_name
+
+    if not video_path.exists():
+        return FrameResponse(
+            success=False,
+            error="Video file not found on disk",
+            timestamp=timestamp,
+            video_name=video_name
+        )
+
+    # Extract frame
+    frame = extract_frame_at_timestamp(str(video_path), timestamp)
+
+    if frame is None:
+        return FrameResponse(
+            success=False,
+            error="Failed to extract frame at timestamp",
+            timestamp=timestamp,
+            video_name=video_name
+        )
+
+    # Convert to base64
+    frame_data = frame_to_base64(frame)
+
+    if not frame_data:
+        return FrameResponse(
+            success=False,
+            error="Failed to encode frame",
+            timestamp=timestamp,
+            video_name=video_name
+        )
+
+    return FrameResponse(
+        success=True,
+        frame_data=frame_data,
+        timestamp=timestamp,
+        video_name=video_name
+    )
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy" if video_system else "starting"}
+
+if __name__ == "__main__":
+    print("🚀 Starting Complete Video Search Server")
+    print("=" * 50)
+
+    uvicorn.run(
+        "server:app",
+        host="0.0.0.0",
+        port=5001,
+        reload=False,
+        log_level="info"
+    )

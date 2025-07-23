@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎬 Modular Video Search</title>
+    <style>
+        :root {
+            --primary: #96B5EA;
+            --primary-dark: #9699ea;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --bg: #fafafa;
+            --surface: #ffffff;
+            --border: #e5e7eb;
+            --text: #111827;
+            --text-muted: #6b7280;
+            --accent: #8b5cf6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .header .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+
+        .header .architecture-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .search-section {
+            margin-bottom: 2rem;
+        }
+
+        .search-container {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 1rem;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.2s;
+            background: var(--surface);
+        }
+
+        .search-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(150, 181, 234, 0.1);
+        }
+
+        .btn {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            box-shadow: 0 2px 8px rgba(150, 181, 234, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(150, 181, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 1rem;
+            background: var(--surface);
+        }
+
+        .upload-area:hover, .upload-area.dragover {
+            border-color: var(--primary);
+            background: #f8faff;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--primary);
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .result-card {
+            background: var(--surface);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: all 0.2s;
+            border: 1px solid var(--border);
+        }
+
+        .result-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .result-info {
+            padding: 1.5rem;
+        }
+
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+            font-size: 1.1rem;
+        }
+
+        .result-meta {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+        }
+
+        .confidence-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--success), var(--warning));
+            transition: width 0.3s;
+            border-radius: 3px;
+        }
+
+        .confidence-text {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: right;
+        }
+
+        .status {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin: 1rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status.success {
+            background: #d1fae5;
+            color: var(--success);
+        }
+
+        .status.error {
+            background: #fee2e2;
+            color: var(--error);
+        }
+
+        .status.info {
+            background: #dbeafe;
+            color: var(--primary);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid var(--border);
+            border-top: 2px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 0.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab {
+            flex: 1;
+            padding: 1rem 2rem;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            box-shadow: 0 2px 8px rgba(150, 181, 234, 0.3);
+        }
+
+        .tab:not(.active):hover {
+            background: var(--bg);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .search-options {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .search-options label {
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .search-options select {
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+        }
+
+        .video-list {
+            margin-top: 1.5rem;
+        }
+
+        .video-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            background: var(--surface);
+            transition: all 0.2s;
+        }
+
+        .video-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .video-info h4 {
+            margin-bottom: 0.25rem;
+        }
+
+        .video-meta {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .btn-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            transition: width 0.3s;
+        }
+
+        .api-links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .api-link {
+            padding: 0.5rem 1rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            text-decoration: none;
+            color: var(--text);
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .api-link:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border-radius: 12px;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-muted);
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+
+        .modal-close:hover {
+            background: var(--border);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        #frame-container {
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        #frame-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        #frame-container video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        #frame-info {
+            background: var(--bg);
+            padding: 1rem;
+            border-radius: 8px;
+        }
+
+        #frame-info p {
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Emergency modal hide script -->
+    <script>
+        // IMMEDIATELY hide modal on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                const modal = document.getElementById('frame-modal');
+                if (modal) {
+                    modal.classList.add('hidden');
+                    modal.style.display = 'none';
+                    console.log('Modal force hidden on page load');
+                }
+            }, 100);
+        });
+    </script>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 Modular Video Search</h1>
+            <p class="subtitle">High-performance semantic video search with clean modular architecture</p>
+            <div class="architecture-badge">✨ Clean & Modular</div>
+            
+            <div class="api-links">
+                <a href="/api/docs" class="api-link" target="_blank">📚 API Docs</a>
+                <a href="/api/health" class="api-link" target="_blank">💚 Health</a>
+                <a href="/api/stats" class="api-link" target="_blank">📊 Stats</a>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('search')">🔍 Search Videos</div>
+            <div class="tab" onclick="switchTab('upload')">📤 Upload Video</div>
+            <div class="tab" onclick="switchTab('videos')">📁 Video Library</div>
+            <div class="tab" onclick="switchTab('stats')">📊 System Stats</div>
+        </div>
+
+        <!-- Search Tab -->
+        <div id="search-tab" class="tab-content active">
+            <div class="card">
+                <h2 style="margin-bottom: 1rem;">🔍 Search Your Videos</h2>
+                <div class="search-container">
+                    <input type="text" id="search-input" class="search-input" 
+                           placeholder="Search for videos... (e.g., 'car driving fast', 'football goals', 'cute animals')">
+                    <button class="btn btn-primary" onclick="searchVideos()">
+                        <span id="search-icon">🔍</span> Search
+                    </button>
+                </div>
+                
+                <div class="search-options">
+                    <label>Results:</label>
+                    <select id="result-count">
+                        <option value="5">5</option>
+                        <option value="10" selected>10</option>
+                        <option value="20">20</option>
+                    </select>
+                    
+                    <label style="margin-left: 1rem;">Search powered by:</label>
+                    <span id="search-engine" style="color: var(--primary); font-weight: 600;">CLIP + HNSW</span>
+                </div>
+            </div>
+
+            <div id="search-results"></div>
+            
+            <!-- Video Frame Preview Modal -->
+            <div id="frame-modal" class="modal hidden">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="modal-title">Video Frame Preview</h3>
+                        <button class="modal-close" onclick="closeFrameModal(); event.stopPropagation();" style="z-index: 9999; position: relative;">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="frame-container">
+                            <p>Loading frame...</p>
+                        </div>
+                        <div id="frame-info">
+                            <p><strong>Video:</strong> <span id="modal-video-name"></span></p>
+                            <p><strong>Timestamp:</strong> <span id="modal-timestamp"></span></p>
+                            <p><strong>Confidence:</strong> <span id="modal-confidence"></span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload-tab" class="tab-content">
+            <div class="card">
+                <h2 style="margin-bottom: 1rem;">📤 Upload New Video</h2>
+                
+                <!-- YouTube Download Section -->
+                <div style="background: var(--bg); padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                    <h3 style="margin-bottom: 1rem; color: var(--primary);">🎬 Download from YouTube</h3>
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                        <input type="url" id="youtube-url" class="search-input" 
+                               placeholder="Paste YouTube URL here... (e.g., https://youtube.com/watch?v=...)" 
+                               style="flex: 1;">
+                        <button class="btn btn-primary" onclick="downloadFromYoutube()" id="youtube-btn">
+                            📥 Download
+                        </button>
+                    </div>
+                    <p style="font-size: 0.875rem; color: var(--text-muted);">Downloads video and automatically processes it for search</p>
+                    <div id="youtube-status"></div>
+                </div>
+                
+                <!-- OR Divider -->
+                <div style="text-align: center; margin: 2rem 0; color: var(--text-muted); font-weight: 500;">OR</div>
+                
+                <!-- File Upload Section -->
+                <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                    <div class="upload-icon">🎬</div>
+                    <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Click to select or drag & drop video files</p>
+                    <p style="color: var(--text-muted); font-size: 0.875rem;">Supports: MP4, AVI, MOV, MKV (max 1GB)</p>
+                </div>
+                <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv" style="display: none;" onchange="uploadVideo()">
+                
+                <div id="upload-progress" class="hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <p id="upload-status-text">Uploading...</p>
+                </div>
+                
+                <div id="upload-status"></div>
+            </div>
+        </div>
+
+        <!-- Videos Tab -->
+        <div id="videos-tab" class="tab-content">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h2>📁 Video Library</h2>
+                    <button class="btn btn-secondary" onclick="loadVideoList()">🔄 Refresh</button>
+                </div>
+                <div id="video-list" class="video-list"></div>
+            </div>
+        </div>
+
+        <!-- System Stats Tab -->
+        <div id="stats-tab" class="tab-content">
+            <div class="card">
+                <h2 style="margin-bottom: 1rem;">📊 System Statistics</h2>
+                
+                <!-- System Stats -->
+                <div class="stats" id="stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="video-count">-</div>
+                        <div class="stat-label">Videos Indexed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="frames-count">-</div>
+                        <div class="stat-label">Total Frames</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="uptime">-</div>
+                        <div class="stat-label">Uptime (hours)</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="system-status">-</div>
+                        <div class="stat-label">System Status</div>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 2rem;">
+                    <h3>System Information</h3>
+                    <div style="background: var(--bg); padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+                        <p><strong>Architecture:</strong> Modular FastAPI + CLIP + HNSW</p>
+                        <p><strong>Search Engine:</strong> CLIP semantic understanding with HNSW vector index</p>
+                        <p><strong>Performance:</strong> Sub-second search across thousands of video frames</p>
+                        <p><strong>Processing:</strong> Smart video analysis with frame sampling optimization</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTab = 'search';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSystemStats();
+            loadVideoList();
+            
+            // Auto-refresh stats every 30 seconds
+            setInterval(loadSystemStats, 30000);
+
+            // Add enter key support for search
+            document.getElementById('search-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchVideos();
+                }
+            });
+
+            // Drag and drop support
+            const uploadArea = document.getElementById('upload-area');
+            uploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileUpload(files[0]);
+                }
+            });
+        });
+
+        function switchTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tab + '-tab').classList.add('active');
+
+            currentTab = tab;
+
+            // Load data for the tab
+            if (tab === 'videos') {
+                loadVideoList();
+            } else if (tab === 'stats') {
+                loadSystemStats();
+            }
+        }
+
+        async function loadSystemStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('video-count').textContent = stats.video_count;
+                document.getElementById('frames-count').textContent = stats.total_frames_indexed;
+                document.getElementById('uptime').textContent = (stats.uptime_seconds / 3600).toFixed(1);
+                document.getElementById('system-status').textContent = stats.system_ready ? '✅ Ready' : '⚠️ Starting';
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+                document.getElementById('system-status').textContent = '❌ Error';
+            }
+        }
+
+        async function searchVideos() {
+            const query = document.getElementById('search-input').value.trim();
+            const k = parseInt(document.getElementById('result-count').value);
+
+            if (!query) {
+                showStatus('Please enter a search query', 'error');
+                return;
+            }
+
+            // Update UI
+            document.getElementById('search-icon').innerHTML = '<div class="loading"></div>';
+            const resultsDiv = document.getElementById('search-results');
+            resultsDiv.innerHTML = '<div class="status info">🔍 Searching with CLIP semantic understanding...</div>';
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        k: k,
+                        use_cache: true
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Search failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Search results received:', data); // Debug log
+                console.log('Search time from API:', data.search_time_ms); // Debug search time
+                displaySearchResults(data);
+
+            } catch (error) {
+                console.error('Search failed:', error);
+                resultsDiv.innerHTML = `<div class="status error">❌ Search failed: ${error.message}</div>`;
+            } finally {
+                document.getElementById('search-icon').textContent = '🔍';
+            }
+        }
+
+        function displaySearchResults(data) {
+            const resultsDiv = document.getElementById('search-results');
+            
+            if (!data.results || data.results.length === 0) {
+                resultsDiv.innerHTML = '<div class="status info">📭 No results found. Try different keywords!</div>';
+                return;
+            }
+
+            // Smart time formatting - check if it's actually milliseconds being passed as milliseconds
+            let searchTime;
+            if (data.search_time_ms) {
+                // If > 10 seconds (10000ms), it's probably already in milliseconds incorrectly
+                if (data.search_time_ms > 10000) {
+                    searchTime = (data.search_time_ms / 1000000).toFixed(3); // Convert from microseconds
+                } else if (data.search_time_ms > 10) {
+                    searchTime = (data.search_time_ms / 1000).toFixed(3); // Convert from milliseconds  
+                } else {
+                    searchTime = data.search_time_ms.toFixed(3); // Already in seconds
+                }
+            } else {
+                searchTime = 'Unknown';
+            }
+            let html = `
+                <div class="status success">
+                    ✅ Found ${data.results.length} results in ${searchTime}s
+                </div>
+                <div class="results-grid">
+            `;
+
+            data.results.forEach((result, index) => {
+                // Handle different possible key names from the processor
+                const videoName = result.video_file || result.video_name || 'Unknown Video';
+                const confidence = ((result.confidence || result.score || 0) * 100).toFixed(1);
+                const timestamp = formatTimestamp(result.timestamp || 0);
+                
+                console.log(`Result ${index}:`, { videoName, timestamp: result.timestamp, confidence }); // Debug log
+                
+                html += `
+                    <div class="result-card" onclick="showVideoFrame('${videoName.replace(/'/g, '\\\'')}', ${result.timestamp || 0}, '${confidence}%', ${index})" style="cursor: pointer; transition: all 0.2s;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <div class="result-info">
+                            <div class="result-title">📹 ${videoName}</div>
+                            <div class="result-meta">
+                                🕒 ${timestamp} • 📊 ${confidence}% match
+                            </div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" style="width: ${confidence}%"></div>
+                            </div>
+                            <div class="confidence-text">${confidence}% confidence</div>
+                            <div style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-muted); font-weight: 500;">
+                                👁️ Click to view video at timestamp
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+        }
+
+        async function downloadFromYoutube() {
+            const url = document.getElementById('youtube-url').value.trim();
+            const button = document.getElementById('youtube-btn');
+            const statusDiv = document.getElementById('youtube-status');
+            
+            if (!url) {
+                showYouTubeStatus('Please enter a YouTube URL', 'error');
+                return;
+            }
+            
+            // Validate YouTube URL
+            const youtubeRegex = /^(https?\:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/watch\?v=([\w-]+)|youtu\.be\/([\w-]+)/;
+            if (!youtubeRegex.test(url)) {
+                showYouTubeStatus('Please enter a valid YouTube URL', 'error');
+                return;
+            }
+            
+            // Update UI
+            button.innerHTML = '<div class="loading"></div> Downloading...';
+            button.disabled = true;
+            statusDiv.innerHTML = '<div class="status info">📥 Starting YouTube download...</div>';
+            
+            try {
+                const response = await fetch('/api/youtube/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `Download failed: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                showYouTubeStatus(`✅ Successfully downloaded and processed: ${result.title || 'Video'}`, 'success');
+                
+                // Clear the URL input
+                document.getElementById('youtube-url').value = '';
+                
+                // Refresh stats and video list
+                loadSystemStats();
+                if (currentTab === 'videos') {
+                    loadVideoList();
+                }
+                
+            } catch (error) {
+                console.error('YouTube download failed:', error);
+                showYouTubeStatus(`❌ Download failed: ${error.message}`, 'error');
+            } finally {
+                button.innerHTML = '📥 Download';
+                button.disabled = false;
+            }
+        }
+        
+        function showYouTubeStatus(message, type) {
+            const statusDiv = document.getElementById('youtube-status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide success messages after 5 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            }
+        }
+        
+        async function uploadVideo() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            
+            if (!file) return;
+            
+            handleFileUpload(file);
+        }
+
+        async function handleFileUpload(file) {
+            const allowedTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/quicktime', 'video/x-msvideo'];
+            
+            if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|avi|mov|mkv)$/i)) {
+                showStatus('Please select a valid video file (MP4, AVI, MOV, MKV)', 'error');
+                return;
+            }
+
+            if (file.size > 1024 * 1024 * 1024) { // 1GB
+                showStatus('File too large. Maximum size is 1GB.', 'error');
+                return;
+            }
+
+            // Show progress
+            document.getElementById('upload-progress').classList.remove('hidden');
+            document.getElementById('upload-status').innerHTML = '';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/videos/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Upload failed: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                document.getElementById('upload-progress').classList.add('hidden');
+                showStatus(`✅ Video uploaded and processed successfully! ${result.frames_indexed} frames indexed.`, 'success');
+                
+                // Refresh stats and video list
+                loadSystemStats();
+                if (currentTab === 'videos') {
+                    loadVideoList();
+                }
+
+            } catch (error) {
+                document.getElementById('upload-progress').classList.add('hidden');
+                showStatus(`❌ Upload failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadVideoList() {
+            try {
+                const response = await fetch('/api/videos');
+                const data = await response.json();
+                
+                const videoList = document.getElementById('video-list');
+                
+                if (!data.videos || data.videos.length === 0) {
+                    videoList.innerHTML = '<div class="status info">📁 No videos found. Upload some videos to get started!</div>';
+                    return;
+                }
+
+                let html = '';
+                data.videos.forEach(video => {
+                    const size = formatFileSize(video.size);
+                    const date = new Date(video.processed_at * 1000).toLocaleDateString();
+                    
+                    html += `
+                        <div class="video-item">
+                            <div class="video-info">
+                                <h4>📹 ${video.filename}</h4>
+                                <div class="video-meta">
+                                    📊 ${size} • 📅 Processed: ${date} • 🆔 ${video.id}
+                                </div>
+                            </div>
+                            <button class="btn btn-small btn-secondary" onclick="deleteVideo('${video.id}')">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                    `;
+                });
+                
+                videoList.innerHTML = html;
+
+            } catch (error) {
+                console.error('Failed to load video list:', error);
+                document.getElementById('video-list').innerHTML = '<div class="status error">❌ Failed to load videos</div>';
+            }
+        }
+
+        async function deleteVideo(videoId) {
+            if (!confirm('Are you sure you want to delete this video?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/videos/${videoId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Delete failed: ${response.status}`);
+                }
+
+                showStatus('✅ Video deleted successfully', 'success');
+                loadVideoList();
+                loadSystemStats();
+
+            } catch (error) {
+                showStatus(`❌ Delete failed: ${error.message}`, 'error');
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('upload-status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 5000);
+        }
+
+        function formatTimestamp(seconds) {
+            if (!seconds || isNaN(seconds)) {
+                return '0:00';
+            }
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        async function showVideoFrame(videoName, timestamp, confidence, resultIndex) {
+            console.log('🎬 showVideoFrame called with:', { videoName, timestamp, confidence, resultIndex });
+            
+            const modal = document.getElementById('frame-modal');
+            const frameContainer = document.getElementById('frame-container');
+            const modalVideoName = document.getElementById('modal-video-name');
+            const modalTimestamp = document.getElementById('modal-timestamp');
+            const modalConfidence = document.getElementById('modal-confidence');
+            
+            console.log('Modal elements found:', { modal: !!modal, frameContainer: !!frameContainer });
+            
+            // Set modal info
+            modalVideoName.textContent = videoName;
+            modalTimestamp.textContent = formatTimestamp(timestamp);
+            modalConfidence.textContent = confidence;
+            
+            // Show modal
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex'; // Force display
+            
+            console.log('Modal should now be visible');
+            
+            frameContainer.innerHTML = '<p>Loading video...</p>';
+            
+            try {
+                // Try to get the video file path from the API
+                const response = await fetch('/api/videos');
+                const data = await response.json();
+                
+                // Find the matching video by name
+                const matchingVideo = data.videos.find(video => 
+                    video.filename === videoName || 
+                    video.filename.includes(videoName.replace(/\.(mp4|avi|mov|mkv)$/i, ''))
+                );
+                
+                if (!matchingVideo) {
+                    frameContainer.innerHTML = '<p style="color: var(--error);">Video file not found</p>';
+                    return;
+                }
+                
+                // Create video element with the correct filename
+                const videoPath = `/videos/${encodeURIComponent(matchingVideo.filename)}`;
+                
+                frameContainer.innerHTML = `
+                    <video controls style="max-width: 100%; height: auto; border-radius: 8px;" preload="metadata">
+                        <source src="${videoPath}" type="video/mp4">
+                        <source src="${videoPath}" type="video/mov">
+                        <source src="${videoPath}" type="video/avi">
+                        <p style="color: var(--error);">Your browser doesn't support video playback.</p>
+                    </video>
+                    <p style="margin-top: 1rem; color: var(--text-muted); font-size: 0.875rem;">
+                        Video will start at the matched timestamp (${formatTimestamp(timestamp)})
+                    </p>
+                `;
+                
+                // Set the video to the exact timestamp when loaded
+                const video = frameContainer.querySelector('video');
+                video.addEventListener('loadedmetadata', function() {
+                    if (timestamp && timestamp > 0) {
+                        video.currentTime = timestamp;
+                    }
+                });
+                
+                // Handle video loading errors
+                video.addEventListener('error', function() {
+                    frameContainer.innerHTML = '<p style="color: var(--error);">Error loading video. Please check if the file exists.</p>';
+                });
+                
+            } catch (error) {
+                console.error('Error loading video:', error);
+                frameContainer.innerHTML = '<p style="color: var(--error);">Error loading video information</p>';
+            }
+        }
+
+        function closeFrameModal() {
+            console.log('Attempting to close modal...');
+            const modal = document.getElementById('frame-modal');
+            const frameContainer = document.getElementById('frame-container');
+            
+            // FORCE hide modal immediately
+            modal.style.display = 'none';
+            modal.classList.add('hidden');
+            
+            // Stop and clear any playing video
+            if (frameContainer) {
+                const videos = frameContainer.querySelectorAll('video');
+                videos.forEach(video => {
+                    video.pause();
+                    video.src = '';
+                    video.load();
+                });
+                
+                // Clear container completely
+                frameContainer.innerHTML = '<p>Loading frame...</p>';
+            }
+            
+            // Stop ALL videos on the page as backup
+            document.querySelectorAll('video').forEach(video => {
+                video.pause();
+                video.src = '';
+            });
+            
+            console.log('Modal closed successfully');
+            return false; // Prevent any event bubbling
+        }
+
+        // Close modal when clicking outside
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('frame-modal');
+            if (event.target === modal) {
+                closeFrameModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeFrameModal();
+            }
+        });
+        
+        // Emergency force close function (can be called from console)
+        window.forceCloseModal = function() {
+            console.log('Force closing modal...');
+            const modal = document.getElementById('frame-modal');
+            const frameContainer = document.getElementById('frame-container');
+            
+            // Force hide modal
+            modal.style.display = 'none';
+            modal.classList.add('hidden');
+            
+            // Clear all content
+            frameContainer.innerHTML = '';
+            
+            // Stop all videos on the page
+            document.querySelectorAll('video').forEach(video => {
+                video.pause();
+                video.src = '';
+                video.load();
+            });
+            
+            console.log('Modal force closed!');
+        };
+        
+        // YouTube Download Function
+        async function downloadFromYoutube() {
+            const url = document.getElementById('youtube-url').value.trim();
+            const button = document.getElementById('youtube-btn');
+            const statusDiv = document.getElementById('youtube-status');
+            
+            if (!url) {
+                showYouTubeStatus('Please enter a YouTube URL', 'error');
+                return;
+            }
+            
+            // Validate YouTube URL
+            const youtubeRegex = /^(https?\:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/watch\?v=([\w-]+)|youtu\.be\/([\w-]+)/;
+            if (!youtubeRegex.test(url)) {
+                showYouTubeStatus('Please enter a valid YouTube URL', 'error');
+                return;
+            }
+            
+            // Update UI
+            button.innerHTML = '<div class="loading"></div> Downloading...';
+            button.disabled = true;
+            statusDiv.innerHTML = '<div class="status info">📥 Starting YouTube download...</div>';
+            
+            try {
+                const response = await fetch('/api/youtube/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `Download failed: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                showYouTubeStatus(`✅ Successfully downloaded and processed: ${result.title || 'Video'}`, 'success');
+                
+                // Clear the URL input
+                document.getElementById('youtube-url').value = '';
+                
+                // Refresh stats and video list
+                loadSystemStats();
+                if (currentTab === 'videos') {
+                    loadVideoList();
+                }
+                
+            } catch (error) {
+                console.error('YouTube download failed:', error);
+                showYouTubeStatus(`❌ Download failed: ${error.message}`, 'error');
+            } finally {
+                button.innerHTML = '📥 Download';
+                button.disabled = false;
+            }
+        }
+        
+        function showYouTubeStatus(message, type) {
+            const statusDiv = document.getElementById('youtube-status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide success messages after 5 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+</html>

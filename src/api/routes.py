@@ -1,41 +1,40 @@
 """
-FastAPI REST API for Video Search System
-High-performance async API with sub-second response times
+🚀 FastAPI Routes - Modular Video Search API
+==========================================
+Clean API endpoints using our optimized video search system
 """
 
 import asyncio
 import time
 import uuid
+import os
+import shutil
 from typing import List, Dict, Any, Optional, Union
 import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-import uvicorn
 import numpy as np
 from PIL import Image
 import io
 import base64
 
-from video_search_system import VideoSearchSystem
-from utils.config import load_config, get_default_config
+# Import our bridge system
+from video_search_system_bridge import get_video_search_system
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global system instance
-video_search_system: Optional[VideoSearchSystem] = None
-
 # Pydantic models
+
+
 class SearchRequest(BaseModel):
     query: str = Field(..., description="Search query (text or base64 image)")
     k: int = Field(5, ge=1, le=50, description="Number of results to return")
     use_cache: bool = Field(True, description="Whether to use caching")
+
 
 class SearchResponse(BaseModel):
     results: List[Dict[str, Any]]
@@ -44,6 +43,7 @@ class SearchResponse(BaseModel):
     query_id: str
     performance: Optional[Dict[str, Any]] = None
 
+
 class VideoUploadResponse(BaseModel):
     video_id: str
     status: str
@@ -51,10 +51,12 @@ class VideoUploadResponse(BaseModel):
     processing_time: float
     performance: Optional[Dict[str, Any]] = None
 
+
 class HealthResponse(BaseModel):
     status: str
     timestamp: float
     components: Dict[str, Dict[str, Any]]
+
 
 class SystemStatsResponse(BaseModel):
     uptime_seconds: float
@@ -66,368 +68,326 @@ class SystemStatsResponse(BaseModel):
     cache_performance: Dict[str, Any]
     metrics: Dict[str, Any]
 
+
 class BatchSearchRequest(BaseModel):
     queries: List[str] = Field(..., description="List of search queries")
     k: int = Field(5, ge=1, le=50, description="Number of results per query")
 
-# Create FastAPI app
-app = FastAPI(
-    title="Video Search API",
-    description="High-performance video search with HNSW index",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
 
-# Add middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Configuration
+UPLOAD_FOLDER = Path("videos")
+MAX_FILE_SIZE = 1024 * 1024 * 1024  # 1GB
 
-app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the video search system"""
-    global video_search_system
-    
-    try:
-        logger.info("Starting Video Search API...")
-        
-        # Load configuration
-        config_path = Path(__file__).parent.parent.parent / 'config' / 'default.yaml'
-        
-        if config_path.exists():
-            video_search_system = VideoSearchSystem(str(config_path))
-        else:
-            logger.warning("Config file not found, using defaults")
-            video_search_system = VideoSearchSystem()
-        
-        # Complete system startup
-        await video_search_system.startup()
-        
-        logger.info("Video Search API started successfully")
-        
-    except Exception as e:
-        logger.error(f"Failed to start Video Search API: {e}")
-        raise
+def create_api_routes(app: FastAPI):
+    """Create all API routes"""
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    global video_search_system
-    
-    if video_search_system:
-        await video_search_system.shutdown()
-        logger.info("Video Search API shutdown complete")
-
-# API Routes
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """
-    System health check endpoint
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    health_data = await video_search_system.health_check()
-    return HealthResponse(**health_data)
-
-@app.get("/stats", response_model=SystemStatsResponse)
-async def get_system_stats():
-    """
-    Get comprehensive system statistics
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    stats = video_search_system.get_system_stats()
-    return SystemStatsResponse(**stats)
-
-@app.get("/metrics")
-async def get_metrics():
-    """
-    Get Prometheus-compatible metrics
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    metrics_text = video_search_system.metrics.export_prometheus()
-    return JSONResponse(
-        content=metrics_text,
-        media_type="text/plain"
-    )
-
-@app.post("/videos/upload", response_model=VideoUploadResponse)
-async def upload_video(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    video_id: Optional[str] = Form(None)
-):
-    """
-    Upload and index a video file
-    Processing happens in background for large files
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    # Validate file
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-    
-    # Check file size (5GB limit)
-    MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
-    if hasattr(file, 'size') and file.size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large")
-    
-    # Generate video ID if not provided
-    if not video_id:
-        video_id = str(uuid.uuid4())
-    
-    try:
-        # Save uploaded file temporarily
-        temp_dir = Path("/tmp/video_search")
-        temp_dir.mkdir(exist_ok=True)
-        
-        temp_file_path = temp_dir / f"{video_id}_{file.filename}"
-        
-        # Write file
-        with open(temp_file_path, "wb") as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-        
-        logger.info(f"File uploaded: {temp_file_path}")
-        
-        # Process video (this may take time)
-        start_time = time.time()
-        
-        result = await video_search_system.add_video(str(temp_file_path), video_id)
-        
-        # Clean up temp file
+    @app.get("/api/health", response_model=HealthResponse)
+    async def health_check():
+        """System health check endpoint"""
         try:
-            temp_file_path.unlink()
-        except Exception:
-            pass
-        
-        if result['status'] == 'error':
-            raise HTTPException(status_code=500, detail=result['error'])
-        
-        return VideoUploadResponse(**result)
-        
-    except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            system = get_video_search_system()
+            health_data = await system.health_check()
+            return HealthResponse(**health_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"System not ready: {e}")
 
-@app.post("/search", response_model=SearchResponse)
-async def search_videos(request: SearchRequest):
-    """
-    Search for similar videos
-    Supports both text and image queries
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    try:
-        query = request.query
-        
-        # Check if query is a base64 encoded image
-        if query.startswith('data:image/'):
-            # Decode base64 image
+    @app.get("/api/stats", response_model=SystemStatsResponse)
+    async def get_system_stats():
+        """Get comprehensive system statistics"""
+        try:
+            system = get_video_search_system()
+            stats = system.get_system_stats()
+            return SystemStatsResponse(**stats)
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"System not ready: {e}")
+
+    @app.post("/api/videos/upload", response_model=VideoUploadResponse)
+    async def upload_video(
+        file: UploadFile = File(...),
+        video_id: Optional[str] = Form(None)
+    ):
+        """Upload and index a video file"""
+        try:
+            system = get_video_search_system()
+
+            # Validate file
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No file provided")
+
+            # Generate video ID if not provided
+            if not video_id:
+                video_id = str(uuid.uuid4())
+
+            # Check file type
+            allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv'}
+            file_ext = Path(file.filename).suffix.lower()
+            if file_ext not in allowed_extensions:
+                raise HTTPException(
+                    status_code=400, detail=f"Unsupported file type: {file_ext}")
+
+            # Save uploaded file
+            filename = f"{video_id}_{file.filename}"
+            file_path = UPLOAD_FOLDER / filename
+
             try:
-                header, data = query.split(',', 1)
-                image_data = base64.b64decode(data)
-                image = Image.open(io.BytesIO(image_data))
-                
-                # Convert to numpy array
-                query_array = np.array(image)
-                
-                # Search with image
-                results = await video_search_system.search(
-                    query_array, 
+                with open(file_path, "wb") as buffer:
+                    content = await file.read()
+                    if len(content) > MAX_FILE_SIZE:
+                        raise HTTPException(
+                            status_code=413, detail="File too large (max 1GB)")
+                    buffer.write(content)
+
+                logger.info(f"📁 File uploaded: {file_path}")
+
+                # Process video
+                result = await system.add_video(str(file_path), video_id)
+
+                if result['status'] == 'error':
+                    # Clean up file on error
+                    try:
+                        file_path.unlink()
+                    except:
+                        pass
+                    raise HTTPException(
+                        status_code=500, detail=result['error'])
+
+                return VideoUploadResponse(**result)
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Clean up file on error
+                try:
+                    file_path.unlink()
+                except:
+                    pass
+                raise HTTPException(
+                    status_code=500, detail=f"Upload failed: {e}")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Upload endpoint failed: {e}")
+            raise HTTPException(status_code=503, detail="System not ready")
+
+    @app.post("/api/search", response_model=SearchResponse)
+    async def search_videos(request: SearchRequest):
+        """Search for similar videos"""
+        try:
+            system = get_video_search_system()
+
+            query = request.query.strip()
+            if not query:
+                raise HTTPException(
+                    status_code=400, detail="No query provided")
+
+            # Check if query is a base64 encoded image
+            if query.startswith('data:image/'):
+                try:
+                    header, data = query.split(',', 1)
+                    image_data = base64.b64decode(data)
+                    image = Image.open(io.BytesIO(image_data))
+
+                    # Convert to numpy array
+                    query_array = np.array(image)
+
+                    # Search with image
+                    results = await system.search(
+                        query_array,
+                        k=request.k,
+                        use_cache=request.use_cache
+                    )
+
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid image data: {e}")
+            else:
+                # Text search
+                results = await system.search(
+                    query,
                     k=request.k,
                     use_cache=request.use_cache
                 )
-                
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid image data: {e}")
-        else:
-            # Text search
-            results = await video_search_system.search(
-                query,
-                k=request.k,
-                use_cache=request.use_cache
+
+            return SearchResponse(**results)
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+
+    @app.post("/api/search/batch")
+    async def batch_search(request: BatchSearchRequest):
+        """Process multiple search queries in parallel"""
+        try:
+            system = get_video_search_system()
+
+            results = await system.search_batch(request.queries, request.k)
+
+            return {
+                "results": results,
+                "query_count": len(request.queries),
+                "total_results": sum(len(r.get('results', [])) for r in results)
+            }
+
+        except Exception as e:
+            logger.error(f"Batch search failed: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Batch search failed: {e}")
+
+    @app.get("/api/videos/{video_id}")
+    async def get_video_info(video_id: str):
+        """Get information about a specific video"""
+        try:
+            system = get_video_search_system()
+            video_info = system.get_video_info(video_id)
+
+            if not video_info:
+                raise HTTPException(status_code=404, detail="Video not found")
+
+            return video_info
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="System not ready")
+
+    @app.get("/api/videos")
+    async def list_videos(limit: int = 100, offset: int = 0):
+        """List indexed videos with pagination"""
+        try:
+            system = get_video_search_system()
+
+            if limit > 1000:
+                raise HTTPException(
+                    status_code=400, detail="Limit too large (max 1000)")
+
+            videos = system.list_videos(limit, offset)
+
+            return {
+                "videos": videos,
+                "count": len(videos),
+                "limit": limit,
+                "offset": offset
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="System not ready")
+
+    @app.delete("/api/videos/{video_id}")
+    async def delete_video(video_id: str):
+        """Delete a video from the index"""
+        try:
+            system = get_video_search_system()
+
+            success = system.delete_video(video_id)
+
+            if not success:
+                raise HTTPException(
+                    status_code=404, detail="Video not found or deletion failed")
+
+            return {"status": "deleted", "video_id": video_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=503, detail="System not ready")
+
+    @app.post("/api/index/save")
+    async def save_index(filepath: str):
+        """Save index to disk"""
+        try:
+            system = get_video_search_system()
+
+            success = system.save_index(filepath)
+            if not success:
+                raise HTTPException(
+                    status_code=500, detail="Failed to save index")
+
+            return {"status": "saved", "filepath": filepath}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+    @app.post("/api/index/load")
+    async def load_index(filepath: str):
+        """Load index from disk"""
+        try:
+            system = get_video_search_system()
+
+            success = system.load_index(filepath)
+            if not success:
+                raise HTTPException(
+                    status_code=500, detail="Failed to load index")
+
+            return {"status": "loaded", "filepath": filepath}
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Load failed: {e}")
+
+    @app.get("/videos/{filename}")
+    async def serve_video(filename: str):
+        """Serve video files for playback"""
+        try:
+            logger.info(f"Serving video: {filename}")
+            video_path = UPLOAD_FOLDER / filename
+            
+            if not video_path.exists():
+                logger.error(f"Video not found: {video_path}")
+                raise HTTPException(status_code=404, detail=f"Video not found: {filename}")
+            
+            logger.info(f"Video found at: {video_path}")
+            
+            from fastapi.responses import FileResponse
+            return FileResponse(
+                path=str(video_path),
+                media_type="video/mp4",
+                headers={"Accept-Ranges": "bytes"}
             )
-        
-        return SearchResponse(**results)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error serving video {filename}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error serving video: {e}")
 
-@app.post("/search/batch")
-async def batch_search(request: BatchSearchRequest):
-    """
-    Process multiple search queries in parallel
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    try:
-        results = await video_search_system.search_batch(request.queries, request.k)
-        
+    # Legacy endpoints for compatibility with existing Flask frontend
+    @app.post("/search")
+    async def search_legacy(request: dict):
+        """Legacy search endpoint for compatibility"""
+        search_request = SearchRequest(
+            query=request.get('query', ''),
+            k=request.get('k', 5),
+            use_cache=request.get('use_cache', True)
+        )
+        result = await search_videos(search_request)
+
+        # Convert to legacy format
         return {
-            "results": results,
-            "query_count": len(request.queries),
-            "total_results": sum(len(r['results']) for r in results)
+            'success': True,
+            'results': result.results,
+            'search_time': result.search_time_ms / 1000,
+            'query': search_request.query
         }
-        
-    except Exception as e:
-        logger.error(f"Batch search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/videos/{video_id}")
-async def get_video_info(video_id: str):
-    """
-    Get information about a specific video
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    video_info = video_search_system.get_video_info(video_id)
-    
-    if not video_info:
-        raise HTTPException(status_code=404, detail="Video not found")
-    
-    return video_info
+    @app.get("/videos")
+    async def list_videos_legacy():
+        """Legacy videos endpoint"""
+        try:
+            result = await list_videos()
+            return {"videos": [
+                {
+                    "name": video.get("filename", "unknown"),
+                    "size": video.get("size", 0),
+                    "modified": video.get("processed_at", 0)
+                }
+                for video in result["videos"]
+            ]}
+        except Exception as e:
+            return {"error": str(e)}
 
-@app.get("/videos")
-async def list_videos(limit: int = 100, offset: int = 0):
-    """
-    List indexed videos with pagination
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if limit > 1000:
-        raise HTTPException(status_code=400, detail="Limit too large (max 1000)")
-    
-    videos = video_search_system.list_videos(limit, offset)
-    
-    return {
-        "videos": videos,
-        "count": len(videos),
-        "limit": limit,
-        "offset": offset
-    }
-
-@app.delete("/videos/{video_id}")
-async def delete_video(video_id: str):
-    """
-    Delete a video from the index
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    success = video_search_system.delete_video(video_id)
-    
-    if not success:
-        raise HTTPException(status_code=404, detail="Video not found or deletion failed")
-    
-    return {"status": "deleted", "video_id": video_id}
-
-@app.post("/index/save")
-async def save_index(filepath: str):
-    """
-    Save index to disk
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    try:
-        success = video_search_system.save_index(filepath)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to save index")
-        
-        return {"status": "saved", "filepath": filepath}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/index/load")
-async def load_index(filepath: str):
-    """
-    Load index from disk
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    try:
-        success = video_search_system.load_index(filepath)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to load index")
-        
-        return {"status": "loaded", "filepath": filepath}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/cache/clear")
-async def clear_cache():
-    """
-    Clear all cached data
-    """
-    if not video_search_system:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    video_search_system.cache.clear()
-    
-    return {"status": "cleared"}
-
-# Error handlers
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """
-    Global exception handler
-    """
-    logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
-
-# Main entry point
-def create_app(config_path: Optional[str] = None) -> FastAPI:
-    """
-    Application factory
-    """
     return app
-
-def run_server(
-    host: str = "0.0.0.0",
-    port: int = 8000,
-    workers: int = 1,
-    config_path: Optional[str] = None
-):
-    """
-    Run the API server
-    """
-    uvicorn.run(
-        "src.api.routes:app",
-        host=host,
-        port=port,
-        workers=workers,
-        reload=False,
-        access_log=True,
-        log_level="info"
-    )
-
-if __name__ == "__main__":
-    run_server()
