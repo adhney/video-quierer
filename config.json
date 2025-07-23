@@ -1,6 +1,6 @@
 {
   "sampling_mode": "ultra_high",
-  "max_frames": 300,
+  "max_frames": 500,
   "use_clip": true,
   "enhanced_mode": true,
   "default_results": 10,
