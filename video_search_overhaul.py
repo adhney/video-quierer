@@ -146,9 +146,10 @@ class VideoProcessor:
         hash_input = f"{video_path.name}_{stat.st_size}_{stat.st_mtime}"
         return hashlib.md5(hash_input.encode()).hexdigest()
 
-    def extract_frames(self, video_path: Path, max_frames: int = 300) -> List[Dict]:
-        """Extract frames from video"""
-        logger.info(f"📼 Extracting frames from {video_path.name}")
+    def extract_frames(self, video_path: Path, max_frames: int = 300, sampling_mode: str = "high") -> List[Dict]:
+        """Extract frames from video with different sampling strategies"""
+        logger.info(
+            f"📼 Extracting frames from {video_path.name} (mode: {sampling_mode})")
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -158,8 +159,24 @@ class VideoProcessor:
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Calculate sampling interval
-        interval = max(1, total_frames // max_frames)
+        # Calculate sampling strategy based on mode
+        if sampling_mode == "ultra_high":
+            # For ultra_high, sample every frame if possible, or use minimal interval
+            # More aggressive sampling
+            interval = max(1, total_frames // (max_frames * 2))
+            logger.info(f"🔥 Ultra-high sampling mode: interval={interval}")
+        elif sampling_mode == "high":
+            # Standard high-quality sampling
+            interval = max(1, total_frames // max_frames)
+            logger.info(f"📈 High sampling mode: interval={interval}")
+        elif sampling_mode == "medium":
+            # Medium quality - larger intervals
+            interval = max(1, total_frames // (max_frames // 2))
+            logger.info(f"📊 Medium sampling mode: interval={interval}")
+        else:  # low
+            # Low quality - even larger intervals
+            interval = max(1, total_frames // (max_frames // 4))
+            logger.info(f"📉 Low sampling mode: interval={interval}")
 
         frames = []
         frame_number = 0
@@ -179,7 +196,8 @@ class VideoProcessor:
             frame_number += 1
 
         cap.release()
-        logger.info(f"✅ Extracted {len(frames)} frames")
+        logger.info(
+            f"✅ Extracted {len(frames)} frames with {sampling_mode} sampling")
         return frames
 
     def get_frame_embedding(self, frame: np.ndarray) -> np.ndarray:
@@ -307,13 +325,20 @@ class VideoProcessor:
 class VideoSearchSystem:
     """Complete overhaul - simple and reliable"""
 
-    def __init__(self, videos_dir: str = "videos"):
+    def __init__(self, videos_dir: str = "videos", config=None):
         self.videos_dir = Path(videos_dir)
         self.videos_dir.mkdir(exist_ok=True)
+        self.config = config  # Store configuration
 
         self.cache_path = self.videos_dir / "video_search_cache.pkl"
         self.index = SimpleVideoIndex()
-        self.processor = VideoProcessor(use_clip=True)
+
+        # Use configuration for processor settings
+        use_clip = True
+        if config and hasattr(config, 'use_clip'):
+            use_clip = config.use_clip
+
+        self.processor = VideoProcessor(use_clip=use_clip)
 
         logger.info("🚀 Video Search System initialized")
 
@@ -373,20 +398,30 @@ class VideoSearchSystem:
                     self.index.video_hashes[video.name] != current_hash):
 
                 logger.info(f"🎬 Processing {video.name}")
-                self._process_single_video(video)
+                self._process_single_video(video, self.config)
                 self.index.video_hashes[video.name] = current_hash
 
     def _process_all_videos(self, videos: List[Path]):
         """Process all videos from scratch"""
         for video in videos:
             logger.info(f"🎬 Processing {video.name}")
-            self._process_single_video(video)
+            self._process_single_video(video, self.config)
             self.index.video_hashes[video.name] = self.processor.get_video_hash(
                 video)
 
-    def _process_single_video(self, video_path: Path):
+    def _process_single_video(self, video_path: Path, config=None):
         """Process a single video"""
-        frames = self.processor.extract_frames(video_path, max_frames=300)
+        max_frames = 300  # Default
+        sampling_mode = "high"  # Default
+
+        if config and hasattr(config, 'max_frames'):
+            max_frames = config.max_frames
+
+        if config and hasattr(config, 'sampling_mode'):
+            sampling_mode = config.sampling_mode
+
+        frames = self.processor.extract_frames(
+            video_path, max_frames=max_frames, sampling_mode=sampling_mode)
 
         logger.info(f"🔍 Generating embeddings for {len(frames)} frames...")
 

@@ -23,6 +23,12 @@ import numpy as np
 
 # Import our clean system
 from video_search_overhaul import VideoSearchSystem
+import os
+import json
+from pathlib import Path
+
+# Import API routes
+from src.api.routes import create_api_routes
 
 # Configure logging
 logging.basicConfig(
@@ -36,9 +42,53 @@ video_system: Optional[VideoSearchSystem] = None
 
 # FastAPI app
 app = FastAPI(
-    title="Video Search API - Overhauled",
-    description="Clean, simple, and reliable video search system with frame preview",
-    version="2.1.0"
+    title="🎬 Video Search API",
+    description="""
+    High-performance semantic video search system with CLIP + HNSW indexing.
+    
+    ## Features
+    * **Upload Videos**: Support for MP4, AVI, MOV, MKV files
+    * **YouTube Download**: Direct download and processing from YouTube URLs
+    * **Semantic Search**: CLIP-powered text-to-video search
+    * **Frame Preview**: View exact video frames from search results
+    * **Configuration**: Adjustable sampling modes and processing settings
+    * **Cache Management**: Efficient caching with rebuild/export/import
+    
+    ## Quick Start
+    1. Upload a video using `/api/videos/upload`
+    2. Search with `/api/search` using natural language
+    3. View results with frame-level precision
+    """,
+    version="2.1.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    contact={
+        "name": "Video Search System",
+        "url": "https://github.com/adhney/video-quierer"
+    },
+    tags_metadata=[
+        {
+            "name": "videos",
+            "description": "Video upload, management, and information endpoints"
+        },
+        {
+            "name": "search",
+            "description": "Video search functionality with semantic understanding"
+        },
+        {
+            "name": "configuration",
+            "description": "System configuration and settings management"
+        },
+        {
+            "name": "cache",
+            "description": "Cache management operations"
+        },
+        {
+            "name": "system",
+            "description": "System health, statistics, and monitoring"
+        }
+    ]
 )
 
 # Add CORS
@@ -54,6 +104,9 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 # Mount videos directory for direct video access
 app.mount("/videos", StaticFiles(directory="videos"), name="videos")
+
+# Create API routes
+create_api_routes(app)
 
 # Pydantic models
 

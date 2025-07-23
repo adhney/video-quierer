@@ -1,0 +1,11 @@
+{
+  "sampling_mode": "ultra_high",
+  "max_frames": 300,
+  "use_clip": true,
+  "enhanced_mode": true,
+  "default_results": 10,
+  "cache_search": true,
+  "search_timeout": 30,
+  "auto_save": true,
+  "log_level": "DEBUG"
+}
