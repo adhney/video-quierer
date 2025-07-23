@@ -54,7 +54,8 @@ async def lifespan(app: FastAPI):
     try:
         # Load configuration first
         system_config = load_config_from_file()
-        logger.info(f"📋 Configuration loaded: max_frames={system_config.max_frames}, use_clip={system_config.use_clip}, sampling_mode={system_config.sampling_mode}")
+        logger.info(
+            f"📋 Configuration loaded: max_frames={system_config.max_frames}, use_clip={system_config.use_clip}, sampling_mode={system_config.sampling_mode}")
 
         # Create system with configuration
         video_system = VideoSearchSystem("videos", system_config)
