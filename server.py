@@ -12,6 +12,7 @@ import cv2
 import base64
 from io import BytesIO
 from PIL import Image
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
@@ -28,7 +29,7 @@ import json
 from pathlib import Path
 
 # Import API routes
-from src.api.routes import create_api_routes
+from src.api.routes import create_api_routes, load_config_from_file, ConfigurationModel
 
 # Configure logging
 logging.basicConfig(
@@ -39,9 +40,58 @@ logger = logging.getLogger(__name__)
 
 # Global system instance
 video_system: Optional[VideoSearchSystem] = None
+system_config: Optional[ConfigurationModel] = None
 
-# FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    # Startup
+    global video_system, system_config
+
+    logger.info("🚀 Starting Video Search System...")
+
+    try:
+        # Load configuration first
+        system_config = load_config_from_file()
+        logger.info(f"📋 Configuration loaded: max_frames={system_config.max_frames}, use_clip={system_config.use_clip}, sampling_mode={system_config.sampling_mode}")
+
+        # Create system with configuration
+        video_system = VideoSearchSystem("videos", system_config)
+
+        # Run startup in thread to avoid blocking
+        import threading
+        startup_complete = threading.Event()
+
+        def run_startup():
+            try:
+                video_system.startup()
+                startup_complete.set()
+            except Exception as e:
+                logger.error(f"Startup failed: {e}")
+                startup_complete.set()
+
+        startup_thread = threading.Thread(target=run_startup)
+        startup_thread.start()
+
+        # Wait for startup (with timeout)
+        startup_complete.wait(timeout=300)  # 5 minutes max
+
+        logger.info("✅ Video Search System ready!")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize system: {e}")
+        raise
+
+    yield
+
+    # Shutdown
+    logger.info("🛑 Shutting down Video Search System...")
+
+
+# FastAPI app with lifespan
 app = FastAPI(
+    lifespan=lifespan,
     title="🎬 Video Search API",
     description="""
     High-performance semantic video search system with CLIP + HNSW indexing.
@@ -171,49 +221,6 @@ class FrameResponse(BaseModel):
     error: Optional[str] = None
     timestamp: float
     video_name: str
-
-# Startup/shutdown
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the video search system"""
-    global video_system
-
-    logger.info("🚀 Starting Video Search System...")
-
-    try:
-        video_system = VideoSearchSystem("videos")
-
-        # Run startup in thread to avoid blocking
-        import threading
-        startup_complete = threading.Event()
-
-        def run_startup():
-            try:
-                video_system.startup()
-                startup_complete.set()
-            except Exception as e:
-                logger.error(f"Startup failed: {e}")
-                startup_complete.set()
-
-        startup_thread = threading.Thread(target=run_startup)
-        startup_thread.start()
-
-        # Wait for startup (with timeout)
-        startup_complete.wait(timeout=300)  # 5 minutes max
-
-        logger.info("✅ Video Search System ready!")
-
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize system: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("🛑 Shutting down Video Search System...")
 
 # Helper functions for frame extraction
 
@@ -401,9 +408,9 @@ async def upload_video(file: UploadFile = File(...)):
             content = await file.read()
             buffer.write(content)
 
-        # Process the video
+        # Process the video with current configuration
         frames_before = len(video_system.index.embeddings)
-        video_system._process_single_video(file_path)
+        video_system._process_single_video(file_path, video_system.config)
         frames_after = len(video_system.index.embeddings)
 
         # Update hash

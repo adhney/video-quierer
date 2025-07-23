@@ -427,9 +427,9 @@ def create_api_routes(app: FastAPI):
 
                 logger.info(f"📁 File uploaded: {file_path}")
 
-                # Process video using the simple system
+                # Process video using the system with current configuration
                 frames_before = len(system.index.embeddings)
-                system._process_single_video(file_path)
+                system._process_single_video(file_path, system.config)
                 frames_after = len(system.index.embeddings)
 
                 # Update hash and save cache
@@ -1049,7 +1049,7 @@ def create_api_routes(app: FastAPI):
                 passed_checks=0
             )
 
-    @app.post("/api/cache/export")
+    @app.get("/api/cache/export")
     async def export_cache():
         """Export cache to a downloadable file"""
         try:
